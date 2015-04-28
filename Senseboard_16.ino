@@ -1,3 +1,5 @@
+#include <TinyGPS.h>
+
 #include <sensors.h>
 
 #include <stdint.h>
@@ -15,12 +17,21 @@ int motorSpeed = 0; // speed of the motor
 
 const int MAX_LOOP_COUNT = 1000; // loop count for read and write
 
+// variables for timing
+unsigned long previousMillis = 0;
+unsigned long previousServoRefresh = 0;
+const long interval = 250; // failsafe interval 250 ms
+const long servoRefreshRate = 10; // set to 10 ms / 100hz
+
+
 // the setup routine runs once when you press reset:
 void setup() {
   Serial.begin(115200); // set baud rate speed !!! DONT USE BAUDRATE VARIABLE !!!
   pinMode(led, OUTPUT); // initialize the digital pin as an output.
-  frontServo.attach(10); // attach frontServo to pin 10
-  motor.attach(11); // attach motor to pin 11
+  
+  // default pulse width limits range of 544-2400 us
+  frontServo.attach(8, 1000, 2000); // attach frontServo to pin 10 (SET min and max PWM!!)
+  motor.attach(9, 1000, 2000); // attach motor to pin 11
 }
 
 bool readFull(char* buffer, int bufSize) {
@@ -93,9 +104,15 @@ bool writeMessage(const sense_link::Message *message) {
 PWM values recieved are between -10000 (fully break/counter-clockwise) and 10000 (fully throttle/clockwise)
 PWM values transmitted have to be 1000 to 2000 (1500 is the middle position)
 */
-void setMotorVelocity(int16_t velocity){
+void setMotorVelocity(int16_t velocity){    
     int microseconds = microsecondsPWM(velocity);
-    motor.writeMicroseconds(microseconds);
+    // check PWM value is in range
+    if(microseconds <= 2000 && microseconds >= 1000){
+      motor.writeMicroseconds(microseconds);
+    }else{
+      // mid position
+      motor.writeMicroseconds(1500);
+    }
 }
 
 int microsecondsPWM(int16_t value){
@@ -104,7 +121,11 @@ int microsecondsPWM(int16_t value){
     this is mapped to
     1000 is fully counter-clockwise, 2000 is fully clockwise, and 1500 is in the middle.
     */
-    return (1500 - (((int)value * 500)/10000));
+    int microseconds (1500 - (((int)value * 500)/10000));
+    if(microseconds > 2000 && microseconds < 1000){
+      microseconds = 1500;
+    }
+    return microseconds;
 }
 
 bool sendMessage(sense_link::MessageType mType, sense_link::SensorType sType, uint8_t id, sense_link::SensorData data){
@@ -126,6 +147,33 @@ bool sendMessage(sense_link::MessageType mType, sense_link::SensorType sType, ui
 
 // the loop routine runs over and over again forever:
 void loop() {
+  //stop time
+  unsigned long currentMillis = millis();
+  
+  // Failsafe
+  if(currentMillis - previousMillis >= interval) {
+      // set previousMillis when new motor value is set
+      // set global motorSpeed
+      motorSpeed = 0;
+      setMotorVelocity(motorSpeed);
+          
+      frontServoPosition = 0;
+      frontServo.writeMicroseconds(microsecondsPWM(frontServoPosition));
+      
+      // turn on led
+      digitalWrite(led, HIGH);
+  }
+  
+  // Servo and Motor Refresh
+  if(currentMillis - previousServoRefresh >= servoRefreshRate) {
+      // set previousServoRefresh
+      previousServoRefresh = currentMillis;
+    
+      // rc frame rates are usually 50Hz, so we have to refresh at least every 20ms
+      frontServo.refresh();
+      motor.refresh();
+  }
+  
   /*
     // Simple Serial connectivity test
     char c;
@@ -141,7 +189,7 @@ void loop() {
   //char c = 'A';
   //writeFull(&c,1);
   if (Serial.available() > 0) {
-      digitalWrite(led, HIGH);
+      //digitalWrite(led, HIGH);
       
       // read Message
       sense_link::Message m;
@@ -177,6 +225,9 @@ void loop() {
         if(m.sType == sense_link::MOTOR_VELOCITY){
           // Motor ID 1
           if(m.id == 1){
+            //Failsafe
+            previousMillis = currentMillis;
+            
             // set global motorSpeed
             motorSpeed = m.sensorData.MotorVelocity.acceleration;
             setMotorVelocity(motorSpeed);
@@ -198,7 +249,7 @@ void loop() {
             frontServo.writeMicroseconds(microsecondsPWM(frontServoPosition));
             
             // turn on led
-            digitalWrite(led, HIGH);
+            // digitalWrite(led, HIGH);
             
             sense_link::SensorData data;
             data.Servo.angle = frontServoPosition;
