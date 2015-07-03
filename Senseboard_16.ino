@@ -1,6 +1,7 @@
 #include <TinyGPS.h>
 
-#include <sensors.h>
+
+#include <message.h>
 
 #include <stdint.h>
 #include <Servo.h>
@@ -9,11 +10,20 @@
 
 int led = 13; // Pin 13 has an LED connected on most Arduino boards.
 Servo frontServo; // frontServo 
-Servo motor; // motor of vehicel
+Servo motor; // motor of vehicel7
+Servo rearServo; // rearServo
+
+// Radio Control
+int ch1 = 3;
+int ch2 = 5;
+int ch3 = 6;
+
 char buffer[5]; // message byte buffer
 
 int frontServoPosition = 0; // position of the frontServo
+int rearServoPosition = 0; // position of the rearServo
 int motorSpeed = 0; // speed of the motor
+bool radioControl = true;
 
 const int MAX_LOOP_COUNT = 1000; // loop count for read and write
 
@@ -30,8 +40,15 @@ void setup() {
   pinMode(led, OUTPUT); // initialize the digital pin as an output.
   
   // default pulse width limits range of 544-2400 us
-  frontServo.attach(8, 1000, 2000); // attach frontServo to pin 10 (SET min and max PWM!!)
-  motor.attach(9, 1000, 2000); // attach motor to pin 11
+  frontServo.attach(11, 1000, 2000); // attach frontServo to pin 10 (SET min and max PWM!!)
+  motor.attach(9, 1000, 2000); // attach motor to pin 9
+  rearServo.attach(10, 1000, 2000); 
+  
+  pinMode(ch1, INPUT);
+  pinMode(ch2, INPUT);
+  pinMode(ch3, INPUT);
+  
+  
 }
 
 bool readFull(char* buffer, int bufSize) {
@@ -133,9 +150,9 @@ bool sendMessage(sense_link::MessageType mType, sense_link::SensorType sType, ui
     // new Message out
     sense_link::Message out;
     // set MessageType
-    out.mType = mType;
+    out.message = mType;
     // set SensorType
-    out.sType = sType;
+    out.sensor = sType;
     // set ID 
     out.id = id;
     
@@ -150,18 +167,24 @@ void loop() {
   //stop time
   unsigned long currentMillis = millis();
   
-  // Failsafe
-  if(currentMillis - previousMillis >= interval) {
-      // set previousMillis when new motor value is set
-      // set global motorSpeed
-      motorSpeed = 0;
-      setMotorVelocity(motorSpeed);
-          
-      frontServoPosition = 0;
-      frontServo.writeMicroseconds(microsecondsPWM(frontServoPosition));
+  int trigger = pulseIn(ch3, HIGH);
+  
+  if(trigger > 1850){
+      radioControl = false;
+    }else{
+      radioControl = true;
+    }
+    
+  
+  // Radio Control
+  if(radioControl){
+      frontServoPosition = pulseIn(ch1 , HIGH);
+      motorSpeed = pulseIn(ch2, HIGH);
       
-      // turn on led
-      digitalWrite(led, HIGH);
+      Serial.println(trigger);
+      frontServo.writeMicroseconds(frontServoPosition);
+      rearServo.writeMicroseconds(frontServoPosition);
+      motor.writeMicroseconds(motorSpeed);
   }
   
   // Servo and Motor Refresh
@@ -170,8 +193,8 @@ void loop() {
       previousServoRefresh = currentMillis;
     
       // rc frame rates are usually 50Hz, so we have to refresh at least every 20ms
-      frontServo.refresh();
-      motor.refresh();
+      //frontServo.refresh();
+      //motor.refresh();
   }
   
   /*
@@ -188,106 +211,104 @@ void loop() {
   */
   //char c = 'A';
   //writeFull(&c,1);
-  if (Serial.available() > 0) {
+  if (Serial.available() > 0 && !radioControl) {
       //digitalWrite(led, HIGH);
       
       // read Message
       sense_link::Message m;
       readMessage(&m);
       
-      //m.mType = sense_link::SENSOR_DATA;
-      //m.sType = sense_link::SERVO;
+      //m.actuator = sense_link::ActuatorType;
+      //m.actuatorData = sense_link::ActuatorType::SERVO;
       //m.id = 1;
       
       // check Message ---------
       
       // MessageTypes
-      if(m.mType == sense_link::SENSOR_DATA){
+      if(m.message == sense_link::MessageType::ACTUATOR){
         
         // SensorTypes
-        if(m.sType == sense_link::LED){
+        if(m.actuator == sense_link::ActuatorType::LED){
           if(m.id == 1){
             //digitalWrite(led, HIGH);
-            if(m.sensorData.Led.value == sense_link::ON){
+            if(m.actuatorData.Led.value == sense_link::ON){
               digitalWrite(led, HIGH);   // turn the LED on (HIGH is the voltage level)
             }else{
               digitalWrite(led, LOW);
             }
             
-            sense_link::SensorData data;
-            data.Led.value = m.sensorData.Led.value;
+            sense_link::ActuatorData data;
+            data.Led.value = m.actuatorData.Led.value;
             
             //send message back
-            sendMessage(sense_link::SENSOR_DATA, sense_link::LED, 1, data);
+            //sendMessage(sense_link::SENSOR_DATA, sense_link::LED, 1, data);
             
           }
         }else /* end LED*/
-        if(m.sType == sense_link::MOTOR_VELOCITY){
+        if(m.actuator == sense_link::ActuatorType::MOTOR){
           // Motor ID 1
           if(m.id == 1){
             //Failsafe
             previousMillis = currentMillis;
             
             // set global motorSpeed
-            motorSpeed = m.sensorData.MotorVelocity.acceleration;
+            motorSpeed = m.actuatorData.Motor.speed;
             setMotorVelocity(motorSpeed);
             
-            sense_link::SensorData data;
-            data.MotorVelocity.acceleration = motorSpeed;
+            sense_link::ActuatorData data;
+            data.Motor.speed = motorSpeed;
             
             // send message back
-            sendMessage(sense_link::SENSOR_DATA, sense_link::MOTOR_VELOCITY, 1, data);      
+            //sendMessage(sense_link::SENSOR_DATA, sense_link::MOTOR_VELOCITY, 1, data);      
             
           }  
        }else /* end Motor*/
-       if(m.sType == sense_link::SERVO){
+       if(m.actuator == sense_link::ActuatorType::SERVO){
           // front Servo ID 1
           if(m.id == 1){
             // set global position from message angle
-            frontServoPosition = m.sensorData.Servo.angle;
+            frontServoPosition = m.actuatorData.Servo.angle;
             // write out servo position between 0 and 180 degree as Microseconds (1500 us = 90 degree)
             frontServo.writeMicroseconds(microsecondsPWM(frontServoPosition));
-            
+
             // turn on led
             // digitalWrite(led, HIGH);
             
-            sense_link::SensorData data;
+            sense_link::ActuatorData data;
             data.Servo.angle = frontServoPosition;
             
             // send message back
-            sendMessage(sense_link::SENSOR_DATA, sense_link::SERVO, 1, data);      
+            //sendMessage(sense_link::SENSOR_DATA, sense_link::SERVO, 1, data);      
             
           } /* end Servo ID 1 */
+          
+          // rear Servo ID 2
+          if(m.id == 2){
+            // set global position from message angle
+            rearServoPosition = m.actuatorData.Servo.angle;
+            // write out servo position between 0 and 180 degree as Microseconds (1500 us = 90 degree)
+            rearServo.writeMicroseconds(microsecondsPWM(rearServoPosition));
+
+            // turn on led
+            // digitalWrite(led, HIGH);
+            
+            sense_link::ActuatorData data;
+            data.Servo.angle = rearServoPosition;
+            
+            // send message back
+            //sendMessage(sense_link::SENSOR_DATA, sense_link::SERVO, 1, data);      
+            
+          } /* end Servo ID 1 */
+          
+          
         } /* end Servo */
       }else /* end SENSOR_DATA `*/
-      if(m.mType == sense_link::SENSOR_GET){
-        
-        // get SERVO
-        if(m.sType == sense_link::SERVO){
-          // get Servo with ID 1
-          if(m.id == 1){
-            
-            sense_link::SensorData data;
-            data.Servo.angle = frontServoPosition;
-            
-            sendMessage(sense_link::SENSOR_DATA, sense_link::SERVO, 1, data);
-          
-          } /* end frontServo */
-        }else /* end if SERVO */
-        if(m.sType == sense_link::MOTOR_VELOCITY){
-            sense_link::SensorData data;
-            data.MotorVelocity.acceleration = motorSpeed;
-            
-            sendMessage(sense_link::SENSOR_DATA, sense_link::MOTOR_VELOCITY, 1, data);
-        } /* end Motor */
-        
-      } /* end if SENSOR_GET */
-      else{
+      {
         /* ErrorMessage */
         // send message back
         sense_link::Message out;
-        out.mType = sense_link::ERROR;
-        out.Error.code = 1;
+        out.message = sense_link::MessageType::ERROR;
+        out.error.code = sense_link::ErrorCode::INVALID_SENSOR_TYPE;
         
         writeMessage(&out);
       }
