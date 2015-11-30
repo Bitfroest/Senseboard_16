@@ -1,6 +1,3 @@
-#include <TinyGPS.h>
-
-
 #include <message.h>
 
 #include <stdint.h>
@@ -47,6 +44,7 @@ void setup() {
   pinMode(ch1, INPUT);
   pinMode(ch2, INPUT);
   pinMode(ch3, INPUT);
+  pinMode(2,OUTPUT);
   
   
 }
@@ -164,38 +162,7 @@ bool sendMessage(sense_link::MessageType mType, sense_link::SensorType sType, ui
 
 // the loop routine runs over and over again forever:
 void loop() {
-  //stop time
-  unsigned long currentMillis = millis();
-  
-  int trigger = pulseIn(ch3, HIGH);
-  
-  if(trigger > 1850){
-      radioControl = false;
-    }else{
-      radioControl = true;
-    }
-    
-  
-  // Radio Control
-  if(radioControl){
-      frontServoPosition = pulseIn(ch1 , HIGH);
-      motorSpeed = pulseIn(ch2, HIGH);
-      
-      Serial.println(trigger);
-      frontServo.writeMicroseconds(frontServoPosition);
-      rearServo.writeMicroseconds(frontServoPosition);
-      motor.writeMicroseconds(motorSpeed);
-  }
-  
-  // Servo and Motor Refresh
-  if(currentMillis - previousServoRefresh >= servoRefreshRate) {
-      // set previousServoRefresh
-      previousServoRefresh = currentMillis;
-    
-      // rc frame rates are usually 50Hz, so we have to refresh at least every 20ms
-      //frontServo.refresh();
-      //motor.refresh();
-  }
+  digitalWrite(2,HIGH);
   
   /*
     // Simple Serial connectivity test
@@ -209,9 +176,8 @@ void loop() {
       writeFull(&c,1); 
     }
   */
-  //char c = 'A';
-  //writeFull(&c,1);
-  if (Serial.available() > 0 && !radioControl) {
+  
+  if (Serial.available() > 0) {
       //digitalWrite(led, HIGH);
       
       // read Message
@@ -226,6 +192,7 @@ void loop() {
       
       // MessageTypes
       if(m.message == sense_link::MessageType::ACTUATOR){
+        
         
         // SensorTypes
         if(m.actuator == sense_link::ActuatorType::LED){
@@ -248,8 +215,6 @@ void loop() {
         if(m.actuator == sense_link::ActuatorType::MOTOR){
           // Motor ID 1
           if(m.id == 1){
-            //Failsafe
-            previousMillis = currentMillis;
             
             // set global motorSpeed
             motorSpeed = m.actuatorData.Motor.speed;
@@ -269,7 +234,7 @@ void loop() {
             // set global position from message angle
             frontServoPosition = m.actuatorData.Servo.angle;
             // write out servo position between 0 and 180 degree as Microseconds (1500 us = 90 degree)
-            frontServo.writeMicroseconds(microsecondsPWM(frontServoPosition));
+            frontServo.write(frontServoPosition);
 
             // turn on led
             // digitalWrite(led, HIGH);
@@ -287,7 +252,7 @@ void loop() {
             // set global position from message angle
             rearServoPosition = m.actuatorData.Servo.angle;
             // write out servo position between 0 and 180 degree as Microseconds (1500 us = 90 degree)
-            rearServo.writeMicroseconds(microsecondsPWM(rearServoPosition));
+            rearServo.write(rearServoPosition);
 
             // turn on led
             // digitalWrite(led, HIGH);
